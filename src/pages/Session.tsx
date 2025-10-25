@@ -1,31 +1,24 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Terminal, Users, Send, LogOut, Copy, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-interface Member {
-  id: string;
-  name: string;
-  isHost: boolean;
-}
+import { useTerminalSession } from "@/hooks/useTerminalSession";
+import { useSessionPresence } from "@/hooks/useSessionPresence";
 
 const Session = () => {
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [command, setCommand] = useState("");
-  const [terminalOutput, setTerminalOutput] = useState<string[]>([
-    "Welcome to TermDesk Session",
-    `Session ID: ${sessionId}`,
-    "Waiting for commands...",
-  ]);
-  const [members, setMembers] = useState<Member[]>([
-    { id: "1", name: "Host (You)", isHost: true },
-  ]);
   const [copied, setCopied] = useState(false);
+  const [username] = useState(`User-${Math.random().toString(36).substring(7)}`);
+  const terminalRef = useRef<HTMLDivElement>(null);
+
+  const { terminalOutput, isConnected, sendCommand } = useTerminalSession(sessionId || '');
+  const { members } = useSessionPresence(sessionId || '', username);
 
   const handleCopySessionId = () => {
     if (sessionId) {
@@ -41,12 +34,8 @@ const Session = () => {
 
   const handleCommand = (e: React.FormEvent) => {
     e.preventDefault();
-    if (command.trim()) {
-      setTerminalOutput((prev) => [
-        ...prev,
-        `$ ${command}`,
-        `> Executing command... (backend integration needed)`,
-      ]);
+    if (command.trim() && isConnected) {
+      sendCommand(command);
       setCommand("");
     }
   };
@@ -58,6 +47,13 @@ const Session = () => {
     });
     navigate("/");
   };
+
+  // Auto-scroll to bottom when new output arrives
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [terminalOutput]);
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -80,6 +76,12 @@ const Session = () => {
                 >
                   {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                 </Button>
+                <div className="flex items-center gap-2 ml-2">
+                  <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-primary animate-pulse' : 'bg-destructive'}`} />
+                  <span className="text-xs text-muted-foreground">
+                    {isConnected ? 'Connected' : 'Connecting...'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -97,18 +99,18 @@ const Session = () => {
               <h2 className="font-semibold">Members ({members.length})</h2>
             </div>
             <div className="space-y-2">
-              {members.map((member) => (
+              {members.length === 0 && (
+                <div className="text-sm text-muted-foreground">
+                  Waiting for members...
+                </div>
+              )}
+              {members.map((member, index) => (
                 <div
-                  key={member.id}
+                  key={`${member.userId}-${index}`}
                   className="flex items-center gap-2 p-2 rounded-lg bg-muted/30 border border-border/50"
                 >
                   <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-                  <span className="text-sm">
-                    {member.name}
-                    {member.isHost && (
-                      <span className="ml-2 text-xs text-primary">[HOST]</span>
-                    )}
-                  </span>
+                  <span className="text-sm">{member.username}</span>
                 </div>
               ))}
             </div>
@@ -126,15 +128,32 @@ const Session = () => {
                 </div>
                 <span className="text-xs text-muted-foreground ml-2">terminal</span>
               </div>
-              <div className="space-y-1 text-[hsl(var(--terminal-text))]">
+              <div 
+                ref={terminalRef}
+                className="space-y-1 text-[hsl(var(--terminal-text))] max-h-[450px] overflow-y-auto"
+              >
+                <div className="text-secondary">Welcome to TermDesk Session {sessionId}</div>
+                <div className="text-muted-foreground mb-2">
+                  {isConnected 
+                    ? `Connected as ${username}. Start typing commands...`
+                    : 'Connecting to terminal session...'}
+                </div>
+                
                 {terminalOutput.map((line, index) => (
                   <div
                     key={index}
-                    className={line.startsWith("$") ? "text-primary font-semibold" : ""}
+                    className={line.startsWith("$") ? "text-primary font-semibold" : "whitespace-pre-wrap"}
                   >
                     {line}
                   </div>
                 ))}
+                
+                {terminalOutput.length === 0 && isConnected && (
+                  <div className="text-muted-foreground">
+                    Ready to execute commands. Try 'ls', 'pwd', 'date', or 'echo Hello'
+                  </div>
+                )}
+                
                 <div className="flex items-center">
                   <span className="text-primary animate-pulse">▮</span>
                 </div>
@@ -149,14 +168,17 @@ const Session = () => {
                   onChange={(e) => setCommand(e.target.value)}
                   placeholder="Enter command (e.g., ls, pwd, echo 'Hello')..."
                   className="flex-1 bg-background border-border font-mono text-foreground focus:border-primary"
+                  disabled={!isConnected}
                 />
-                <Button type="submit" variant="default" className="gap-2">
+                <Button type="submit" variant="default" className="gap-2" disabled={!isConnected || !command.trim()}>
                   <Send className="w-4 h-4" />
                   Execute
                 </Button>
               </form>
               <p className="text-xs text-muted-foreground mt-2">
-                Commands will be executed on the host machine. Backend integration required for live execution.
+                {isConnected 
+                  ? 'Commands are executed in real-time on the edge function environment.'
+                  : 'Connecting to terminal session...'}
               </p>
             </Card>
           </div>

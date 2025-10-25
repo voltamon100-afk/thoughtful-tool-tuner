@@ -14,7 +14,94 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      command_history: {
+        Row: {
+          command: string
+          executed_at: string | null
+          executed_by: string | null
+          id: string
+          output: string | null
+          session_id: string | null
+        }
+        Insert: {
+          command: string
+          executed_at?: string | null
+          executed_by?: string | null
+          id?: string
+          output?: string | null
+          session_id?: string | null
+        }
+        Update: {
+          command?: string
+          executed_at?: string | null
+          executed_by?: string | null
+          id?: string
+          output?: string | null
+          session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "command_history_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_members: {
+        Row: {
+          id: string
+          joined_at: string | null
+          session_id: string | null
+          user_id: string | null
+          username: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          session_id?: string | null
+          user_id?: string | null
+          username: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          session_id?: string | null
+          user_id?: string | null
+          username?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_members_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sessions: {
+        Row: {
+          created_at: string | null
+          host_user_id: string | null
+          id: string
+          is_active: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          host_user_id?: string | null
+          id: string
+          is_active?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          host_user_id?: string | null
+          id?: string
+          is_active?: boolean | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
