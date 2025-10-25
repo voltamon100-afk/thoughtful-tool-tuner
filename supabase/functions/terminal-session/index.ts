@@ -8,6 +8,32 @@ const corsHeaders = {
 // Store active sessions and their WebSocket connections
 const sessions = new Map<string, Set<WebSocket>>();
 
+// Store session-level state (file system and current directory)
+interface SessionState {
+  currentDir: string;
+  fileSystem: Map<string, { type: 'file' | 'dir'; content?: string }>;
+}
+
+const sessionStates = new Map<string, SessionState>();
+
+function initSessionState(sessionId: string) {
+  if (!sessionStates.has(sessionId)) {
+    const fileSystem = new Map<string, { type: 'file' | 'dir'; content?: string }>();
+    fileSystem.set('/home/termdesk', { type: 'dir' });
+    fileSystem.set('/home/termdesk/README.md', { type: 'file', content: '# TermDesk\n\nCollaborative terminal sharing application.\n\nFeatures:\n- Real-time terminal sharing\n- Multi-user sessions\n- WebSocket communication\n\n' });
+    fileSystem.set('/home/termdesk/config.json', { type: 'file', content: '{\n  "name": "termdesk",\n  "version": "1.0.0",\n  "port": 8080\n}\n' });
+    fileSystem.set('/home/termdesk/src', { type: 'dir' });
+    fileSystem.set('/home/termdesk/docs', { type: 'dir' });
+    fileSystem.set('/home/termdesk/start.sh', { type: 'file', content: '#!/bin/bash\necho "Starting TermDesk..."\n' });
+    
+    sessionStates.set(sessionId, {
+      currentDir: '/home/termdesk',
+      fileSystem
+    });
+  }
+  return sessionStates.get(sessionId)!;
+}
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -47,6 +73,9 @@ serve(async (req) => {
   socket.onopen = () => {
     console.log(`Client connected to session: ${sessionId}`);
     sessionSockets.add(socket);
+    
+    // Initialize session state if needed
+    initSessionState(sessionId);
     
     // Notify client of successful connection
     socket.send(JSON.stringify({
@@ -100,8 +129,9 @@ serve(async (req) => {
           timestamp: new Date().toISOString()
         });
 
-        // Simulate command execution with predefined responses
-        const output = simulateCommand(sanitizedCommand);
+        // Simulate command execution with session state
+        const sessionState = sessionStates.get(sessionId)!;
+        const output = simulateCommand(sanitizedCommand, sessionState);
         
         // Broadcast output to all clients in the session
         broadcastToSession(sessionId, {
@@ -127,6 +157,7 @@ serve(async (req) => {
     // Clean up empty sessions
     if (sessionSockets.size === 0) {
       sessions.delete(sessionId);
+      sessionStates.delete(sessionId);
       console.log(`Session ${sessionId} cleaned up`);
     }
   };
@@ -138,31 +169,104 @@ serve(async (req) => {
   return response;
 });
 
-function simulateCommand(command: string): string {
+function simulateCommand(command: string, state: SessionState): string {
   const cmd = command.toLowerCase().split(' ')[0];
   const args = command.split(' ').slice(1);
 
-  // Simulated file system
-  const currentDir = '/home/termdesk';
-  const fileList = [
-    'drwxr-xr-x  5 user group   160 Oct 25 14:30 .',
-    'drwxr-xr-x  8 user group   256 Oct 25 12:00 ..',
-    '-rw-r--r--  1 user group  1234 Oct 25 13:45 README.md',
-    '-rw-r--r--  1 user group  5678 Oct 25 14:20 config.json',
-    'drwxr-xr-x  3 user group    96 Oct 25 10:15 src',
-    'drwxr-xr-x  2 user group    64 Oct 25 09:30 docs',
-    '-rwxr-xr-x  1 user group  2048 Oct 25 14:00 start.sh',
-  ];
-
   switch (cmd) {
-    case 'ls':
+    case 'ls': {
+      const targetDir = args[0] || state.currentDir;
+      const path = targetDir.startsWith('/') ? targetDir : `${state.currentDir}/${targetDir}`;
+      
+      const entries: string[] = [];
+      state.fileSystem.forEach((entry, entryPath) => {
+        if (entryPath.startsWith(path + '/') && entryPath !== path) {
+          const relativePath = entryPath.substring(path.length + 1);
+          if (!relativePath.includes('/')) {
+            entries.push(relativePath);
+          }
+        }
+      });
+      
       if (args.includes('-la') || args.includes('-al')) {
-        return fileList.join('\n') + '\n';
+        const detailed = entries.map(name => {
+          const fullPath = `${path}/${name}`;
+          const entry = state.fileSystem.get(fullPath);
+          const isDir = entry?.type === 'dir';
+          return `${isDir ? 'd' : '-'}rwxr-xr-x  1 user group  ${isDir ? '96' : '1234'} Oct 25 14:30 ${name}`;
+        });
+        return detailed.join('\n') + '\n';
       }
-      return 'README.md  config.json  docs  src  start.sh\n';
+      return entries.join('  ') + '\n';
+    }
 
     case 'pwd':
-      return currentDir + '\n';
+      return state.currentDir + '\n';
+
+    case 'cd': {
+      if (!args[0]) {
+        state.currentDir = '/home/termdesk';
+        return '';
+      }
+      
+      const targetPath = args[0].startsWith('/') ? args[0] : `${state.currentDir}/${args[0]}`;
+      const normalizedPath = targetPath.replace(/\/+/g, '/').replace(/\/$/, '');
+      
+      if (state.fileSystem.has(normalizedPath) && state.fileSystem.get(normalizedPath)?.type === 'dir') {
+        state.currentDir = normalizedPath;
+        return '';
+      }
+      return `cd: ${args[0]}: No such directory\n`;
+    }
+
+    case 'mkdir': {
+      if (!args[0]) {
+        return 'mkdir: missing operand\n';
+      }
+      
+      const targetPath = args[0].startsWith('/') ? args[0] : `${state.currentDir}/${args[0]}`;
+      const normalizedPath = targetPath.replace(/\/+/g, '/').replace(/\/$/, '');
+      
+      if (state.fileSystem.has(normalizedPath)) {
+        return `mkdir: cannot create directory '${args[0]}': File exists\n`;
+      }
+      
+      state.fileSystem.set(normalizedPath, { type: 'dir' });
+      return '';
+    }
+
+    case 'rm': {
+      if (!args[0]) {
+        return 'rm: missing operand\n';
+      }
+      
+      const targetPath = args[0].startsWith('/') ? args[0] : `${state.currentDir}/${args[0]}`;
+      const normalizedPath = targetPath.replace(/\/+/g, '/').replace(/\/$/, '');
+      
+      if (!state.fileSystem.has(normalizedPath)) {
+        return `rm: cannot remove '${args[0]}': No such file or directory\n`;
+      }
+      
+      const entry = state.fileSystem.get(normalizedPath);
+      if (entry?.type === 'dir' && !args.includes('-r')) {
+        return `rm: cannot remove '${args[0]}': Is a directory\n`;
+      }
+      
+      // Remove the entry and any subdirectories/files
+      if (args.includes('-r')) {
+        const toDelete: string[] = [];
+        state.fileSystem.forEach((_, path) => {
+          if (path === normalizedPath || path.startsWith(normalizedPath + '/')) {
+            toDelete.push(path);
+          }
+        });
+        toDelete.forEach(path => state.fileSystem.delete(path));
+      } else {
+        state.fileSystem.delete(normalizedPath);
+      }
+      
+      return '';
+    }
 
     case 'whoami':
       return 'termdesk-user\n';
@@ -173,16 +277,22 @@ function simulateCommand(command: string): string {
     case 'echo':
       return args.join(' ') + '\n';
 
-    case 'cat':
-      if (args[0] === 'README.md') {
-        return '# TermDesk\n\nCollaborative terminal sharing application.\n\nFeatures:\n- Real-time terminal sharing\n- Multi-user sessions\n- WebSocket communication\n\n';
-      } else if (args[0] === 'config.json') {
-        return '{\n  "name": "termdesk",\n  "version": "1.0.0",\n  "port": 8080\n}\n';
+    case 'cat': {
+      const targetPath = args[0]?.startsWith('/') ? args[0] : `${state.currentDir}/${args[0]}`;
+      const normalizedPath = targetPath.replace(/\/+/g, '/');
+      
+      const entry = state.fileSystem.get(normalizedPath);
+      if (!entry) {
+        return `cat: ${args[0] || 'file'}: No such file or directory\n`;
       }
-      return `cat: ${args[0] || 'file'}: No such file or directory\n`;
+      if (entry.type === 'dir') {
+        return `cat: ${args[0]}: Is a directory\n`;
+      }
+      return entry.content || '';
+    }
 
     case 'help':
-      return 'Available commands:\n  ls [-la]    - List directory contents\n  pwd         - Print working directory\n  whoami      - Print current user\n  date        - Show current date and time\n  echo <text> - Print text\n  cat <file>  - Display file contents\n  clear       - Clear terminal\n  help        - Show this help message\n\nNote: This is a simulated terminal for demonstration.\n';
+      return 'Available commands:\n  ls [-la] [dir] - List directory contents\n  pwd            - Print working directory\n  cd <dir>       - Change directory\n  mkdir <dir>    - Create directory\n  rm [-r] <file> - Remove file or directory\n  cat <file>     - Display file contents\n  whoami         - Print current user\n  date           - Show current date and time\n  echo <text>    - Print text\n  clear          - Clear terminal\n  uname          - Show system information\n  env            - Show environment variables\n  help           - Show this help message\n\nNote: This is a simulated terminal for demonstration.\n';
 
     case 'clear':
       return '__CLEAR__';
