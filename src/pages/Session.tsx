@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -7,6 +8,12 @@ import { Terminal, Users, Send, LogOut, Copy, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useTerminalSession } from "@/hooks/useTerminalSession";
 import { useSessionPresence } from "@/hooks/useSessionPresence";
+
+// Command validation schema
+const commandSchema = z.string()
+  .trim()
+  .min(1, "Command cannot be empty")
+  .max(500, "Command is too long");
 
 const Session = () => {
   const { sessionId } = useParams();
@@ -34,8 +41,21 @@ const Session = () => {
 
   const handleCommand = (e: React.FormEvent) => {
     e.preventDefault();
-    if (command.trim() && isConnected) {
-      sendCommand(command);
+    
+    // Validate command
+    const result = commandSchema.safeParse(command);
+    
+    if (!result.success) {
+      toast({
+        title: "Invalid command",
+        description: result.error.errors[0].message,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (isConnected) {
+      sendCommand(result.data);
       setCommand("");
     }
   };
@@ -139,14 +159,28 @@ const Session = () => {
                     : 'Connecting to terminal session...'}
                 </div>
                 
-                {terminalOutput.map((line, index) => (
-                  <div
-                    key={index}
-                    className={line.startsWith("$") ? "text-primary font-semibold" : "whitespace-pre-wrap"}
-                  >
-                    {line}
-                  </div>
-                ))}
+                {terminalOutput.map((line, index) => {
+                  // Sanitize output to prevent XSS
+                  const sanitizedLine = line.replace(/[<>&"']/g, (char) => {
+                    const chars: Record<string, string> = {
+                      '<': '&lt;',
+                      '>': '&gt;',
+                      '&': '&amp;',
+                      '"': '&quot;',
+                      "'": '&#x27;',
+                    };
+                    return chars[char] || char;
+                  });
+                  
+                  return (
+                    <div
+                      key={index}
+                      className={line.startsWith("$") ? "text-primary font-semibold" : "whitespace-pre-wrap"}
+                    >
+                      {sanitizedLine}
+                    </div>
+                  );
+                })}
                 
                 {terminalOutput.length === 0 && isConnected && (
                   <div className="text-muted-foreground">

@@ -2,6 +2,20 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
+// Sanitize username to prevent XSS
+const sanitizeUsername = (username: string): string => {
+  return username.replace(/[<>&"']/g, (char) => {
+    const chars: Record<string, string> = {
+      '<': '&lt;',
+      '>': '&gt;',
+      '&': '&amp;',
+      '"': '&quot;',
+      "'": '&#x27;',
+    };
+    return chars[char] || char;
+  }).substring(0, 50);
+};
+
 interface Member {
   userId: string;
   username: string;
@@ -13,11 +27,14 @@ export const useSessionPresence = (sessionId: string, username: string) => {
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
 
   useEffect(() => {
+    // Sanitize username
+    const sanitizedUsername = sanitizeUsername(username);
+    
     // Create a unique channel for this session
     const presenceChannel = supabase.channel(`session:${sessionId}`, {
       config: {
         presence: {
-          key: username,
+          key: sanitizedUsername,
         },
       },
     });
@@ -32,9 +49,13 @@ export const useSessionPresence = (sessionId: string, username: string) => {
         Object.keys(state).forEach((key) => {
           const presences = state[key] as any[];
           presences.forEach((presence) => {
+            // Sanitize user data from presence
+            const sanitizedUsername = sanitizeUsername(presence.username || key);
+            const sanitizedUserId = sanitizeUsername(presence.userId || key);
+            
             membersList.push({
-              userId: presence.userId || key,
-              username: presence.username || key,
+              userId: sanitizedUserId,
+              username: sanitizedUsername,
               online_at: presence.online_at,
             });
           });
@@ -50,10 +71,11 @@ export const useSessionPresence = (sessionId: string, username: string) => {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
-          // Track this user's presence
+          // Track this user's presence with sanitized username
+          const sanitizedUsername = sanitizeUsername(username);
           await presenceChannel.track({
-            userId: username,
-            username: username,
+            userId: sanitizedUsername,
+            username: sanitizedUsername,
             online_at: new Date().toISOString(),
           });
         }

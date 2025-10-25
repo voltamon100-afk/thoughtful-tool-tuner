@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { z } from "zod";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,20 @@ import { Label } from "@/components/ui/label";
 import { LogIn } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+// Input validation schema
+const joinSessionSchema = z.object({
+  sessionId: z.string()
+    .trim()
+    .min(1, "Session ID is required")
+    .max(50, "Session ID is too long")
+    .regex(/^[a-z0-9-]+$/, "Session ID must contain only lowercase letters, numbers, and hyphens"),
+  username: z.string()
+    .trim()
+    .min(1, "Username is required")
+    .max(50, "Username must be less than 50 characters")
+    .regex(/^[a-zA-Z0-9_\s-]+$/, "Username contains invalid characters"),
+});
+
 interface JoinSessionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -25,10 +40,14 @@ const JoinSessionDialog = ({ open, onOpenChange }: JoinSessionDialogProps) => {
   const { toast } = useToast();
 
   const handleJoin = () => {
-    if (!sessionId.trim() || !username.trim()) {
+    // Validate inputs
+    const result = joinSessionSchema.safeParse({ sessionId, username });
+    
+    if (!result.success) {
+      const error = result.error.errors[0];
       toast({
-        title: "Missing information",
-        description: "Please enter both session ID and username",
+        title: "Invalid input",
+        description: error.message,
         variant: "destructive",
       });
       return;
@@ -36,10 +55,10 @@ const JoinSessionDialog = ({ open, onOpenChange }: JoinSessionDialogProps) => {
 
     toast({
       title: "Joining session",
-      description: `Connecting to session ${sessionId}...`,
+      description: `Connecting to session ${result.data.sessionId}...`,
     });
     
-    navigate(`/session/${sessionId}`);
+    navigate(`/session/${result.data.sessionId}`);
     onOpenChange(false);
   };
 

@@ -24,8 +24,14 @@ serve(async (req) => {
   const url = new URL(req.url);
   const sessionId = url.searchParams.get("sessionId");
 
+  // Validate session ID
   if (!sessionId) {
     return new Response("Session ID is required", { status: 400 });
+  }
+  
+  // Validate session ID format (alphanumeric and hyphens only, max 50 chars)
+  if (!/^[a-z0-9-]+$/.test(sessionId) || sessionId.length > 50) {
+    return new Response("Invalid session ID format", { status: 400 });
   }
 
   console.log(`WebSocket connection request for session: ${sessionId}`);
@@ -53,20 +59,49 @@ serve(async (req) => {
   socket.onmessage = async (event) => {
     try {
       const data = JSON.parse(event.data);
-      console.log(`Received message in session ${sessionId}:`, data);
+      
+      // Validate message structure
+      if (!data || typeof data !== 'object') {
+        throw new Error('Invalid message format');
+      }
 
       if (data.type === 'command') {
+        // Validate command
+        if (typeof data.command !== 'string') {
+          throw new Error('Command must be a string');
+        }
+        
         const command = data.command.trim();
+        
+        // Validate command length
+        if (command.length === 0) {
+          socket.send(JSON.stringify({
+            type: 'error',
+            error: 'Command cannot be empty'
+          }));
+          return;
+        }
+        
+        if (command.length > 500) {
+          socket.send(JSON.stringify({
+            type: 'error',
+            error: 'Command is too long'
+          }));
+          return;
+        }
+        
+        // Sanitize command - remove potentially dangerous characters
+        const sanitizedCommand = command.replace(/[;&|`$(){}[\]<>]/g, '');
         
         // Broadcast command to all clients in the session
         broadcastToSession(sessionId, {
           type: 'command_echo',
-          command,
+          command: sanitizedCommand,
           timestamp: new Date().toISOString()
         });
 
         // Simulate command execution with predefined responses
-        const output = simulateCommand(command);
+        const output = simulateCommand(sanitizedCommand);
         
         // Broadcast output to all clients in the session
         broadcastToSession(sessionId, {
