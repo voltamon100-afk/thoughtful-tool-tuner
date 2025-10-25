@@ -46,7 +46,9 @@ export const useTerminalSession = (sessionId: string) => {
             setTerminalOutput(prev => [...prev, `$ ${data.command}`]);
             break;
           case 'output':
-            if (data.output) {
+            if (data.output === '__CLEAR__') {
+              setTerminalOutput([]);
+            } else if (data.output) {
               setTerminalOutput(prev => [...prev, data.output!]);
             }
             break;
